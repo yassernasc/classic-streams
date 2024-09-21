@@ -11,6 +11,8 @@ class Stream extends EventEmitter {
     this._paused = false
     this._ended = false
     this._buffer = []
+
+    this.once('error', this._onerror)
   }
 
   write(data) {
@@ -47,6 +49,11 @@ class Stream extends EventEmitter {
 
     this._ended = true
     this.emit('end')
+  }
+
+  _onerror(err) {
+    const unhandled = this.listenerCount('error') === 0
+    if (unhandled) throw err
   }
 
   pipe(dest) {
@@ -89,16 +96,6 @@ class Stream extends EventEmitter {
       if (dest._connections === 0) dest.end()
     }
 
-    // error handling and teardown
-    source.on('error', onerror)
-    dest.on('error', onerror)
-
-    function onerror(err) {
-      cleanup()
-
-      if (this.listenerCount('error') === 0) throw err
-    }
-
     function cleanup() {
       source.off('data', ondata)
       source.off('end', onend)
@@ -106,9 +103,6 @@ class Stream extends EventEmitter {
       dest.off('pause', onpause)
       dest.off('resume', onresume)
       dest.off('drain', ondrain)
-
-      source.off('error', onerror)
-      dest.off('error', onerror)
     }
 
     return dest
