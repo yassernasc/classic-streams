@@ -1,30 +1,69 @@
 const EventEmitter = require('bare-events')
 
 class Stream extends EventEmitter {
-  constructor({ readable, writable }) {
+  constructor({ readable, writable } = {}) {
     super()
 
-    this.readable = readable || false
-    this.writable = writable || false
+    this.readable = readable ?? true
+    this.writable = writable ?? true
 
     this._connections = 0
+    this._paused = false
+    this._ended = false
+    this._buffer = []
   }
 
-  pipe(dest, opts = {}) {
+  write(data) {
+    if (!this.writable || this._ended) return
+
+    this._buffer.push(data)
+    this.drain()
+
+    return !this._paused
+  }
+
+  drain() {
+    while (this._buffer.length && !this.paused) {
+      this.emit('data', this._buffer.shift())
+    }
+  }
+
+  pause() {
+    if (this._paused) return
+
+    this._paused = true
+    this.emit('pause')
+  }
+
+  resume() {
+    if (!this._paused) return
+
+    this._paused = false
+    this.emit('resume')
+  }
+
+  end() {
+    if (this._ended) return
+
+    this._ended = true
+    this.emit('end')
+  }
+
+  pipe(dest) {
     const source = this
 
     // data flow
     source.on('data', ondata)
-
-    dest.on('drain', ondrain)
-    dest.on('pause', onpause)
-    dest.on('resume', onresume)
 
     function ondata(chunk) {
       if (dest.writable && dest.write(chunk) === false) {
         source.pause()
       }
     }
+
+    dest.on('drain', ondrain)
+    dest.on('pause', onpause)
+    dest.on('resume', onresume)
 
     function ondrain() {
       source.resume()
@@ -39,36 +78,18 @@ class Stream extends EventEmitter {
     }
 
     // closure
-    let ending = false
+    dest._connections++
 
-    if (opts.end !== false) {
-      dest._connections++
-
-      source.on('end', onend)
-      source.on('close', onclose)
-    }
+    source.on('end', onend)
 
     function onend() {
-      if (ending) return
-
-      ending = true
-      dest._connections--
       cleanup()
 
+      dest._connections--
       if (dest._connections === 0) dest.end()
     }
 
-    function onclose() {
-      if (ending) return
-
-      ending = true
-      dest._connections--
-      cleanup()
-
-      if (dest._connections === 0) dest.destroy()
-    }
-
-    // error handling
+    // error handling and teardown
     source.on('error', onerror)
     dest.on('error', onerror)
 
@@ -80,25 +101,17 @@ class Stream extends EventEmitter {
 
     function cleanup() {
       source.off('data', ondata)
-      dest.off('drain', ondrain)
+      source.off('end', onend)
 
       dest.off('pause', onpause)
       dest.off('resume', onresume)
+      dest.off('drain', ondrain)
 
       source.off('error', onerror)
       dest.off('error', onerror)
-
-      source.off('end', onend)
-      source.off('close', onclose)
     }
-  }
 
-  pause() {
-    if (this.readable) this.emit('pause')
-  }
-
-  resume() {
-    if (this.readable) this.emit('resume')
+    return dest
   }
 }
 
